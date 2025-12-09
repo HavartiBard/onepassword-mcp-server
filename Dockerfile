@@ -14,5 +14,5 @@ COPY pyproject.toml uv.lock server.py ./
 # Install dependencies via uv
 RUN uv sync
 
-# Default command to run the MCP server over stdio
-CMD ["uv", "run", "--with", "mcp[cli]", "--with", "onepassword-sdk", "mcp", "run", "server.py"]
+# Run the MCP server (transport configured via MCP_TRANSPORT env var)
+CMD ["uv", "run", "python", "server.py"]
