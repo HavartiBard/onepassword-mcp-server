@@ -57,6 +57,11 @@ npx -y @smithery/cli install . --client claude
 - `list_items(query=None, vault=None, category=None)`: Optional discovery tool to list matching items (title, vault, category).
 - `upsert_item(name, kind, fields, vault=None, tags=[])`: Create or update items using simple templates (password/login expects username/password; api_key/token/secret expects api_key/token/secret; ssh_key expects private_key/public_key/passphrase).
 
+### Available Resources
+- `onepassword://health`: Non-sensitive service status (transport/host/port/path/default vault).
+- `onepassword://vaults`: Vault list (id/name only).
+- `onepassword://vaults/{vault}/items`: Item list for a specific vault (no secret values).
+
 ### Testing
 - Run unit tests: `uv run python -m unittest discover tests`
 - Tests use fakes to validate intent resolution, listing filters, and item creation templates.

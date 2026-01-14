@@ -122,6 +122,42 @@ async def resolve_secret(
     return await resolve_secret_impl(item_name=item_name, intent=intent, vault=vault)
 
 
+@mcp.resource("onepassword://health")
+async def health_resource() -> dict:
+    """Expose non-sensitive service status for diagnostics."""
+    return {
+        "status": "ok",
+        "default_vault": OP_VAULT,
+        "transport": MCP_TRANSPORT,
+        "host": MCP_HOST,
+        "port": MCP_PORT,
+        "path": MCP_PATH,
+    }
+
+
+@mcp.resource("onepassword://vaults")
+async def vaults_resource() -> List[dict]:
+    """List available vaults without exposing secrets."""
+    client = await get_client()
+    vaults_api = getattr(client, "vaults", None)
+    if vaults_api is None or not hasattr(vaults_api, "list"):
+        raise RuntimeError("Vault listing is not supported by the installed onepassword-sdk version.")
+
+    results = vaults_api.list()
+    if hasattr(results, "__await__"):
+        results = await results  # type: ignore[assignment]
+
+    summaries = []
+    for vault in results or []:
+        summaries.append(
+            {
+                "id": getattr(vault, "id", None),
+                "name": getattr(vault, "name", None),
+            }
+        )
+    return summaries
+
+
 async def list_items_impl(
     query: Optional[str] = None,
     vault: Optional[str] = None,
@@ -169,6 +205,12 @@ async def list_items(
 ) -> List[dict]:
     """List items (optionally filtered) to aid discovery and disambiguation."""
     return await list_items_impl(query=query, vault=vault, category=category)
+
+
+@mcp.resource("onepassword://vaults/{vault}/items")
+async def vault_items_resource(vault: str) -> List[dict]:
+    """List items for a given vault without exposing secret values."""
+    return await list_items_impl(vault=vault)
 
 
 async def upsert_item_impl(
