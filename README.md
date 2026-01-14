@@ -15,6 +15,7 @@ npx -y @smithery/cli install @dkvdm/onepassword-mcp-server --client claude
 -   Python 3.11 or higher
 -   `uv` (fast Python package installer): `pip install uv`
 -   Install packages: `uv sync`
+-   Environment: `OP_SERVICE_ACCOUNT_TOKEN` is required; defaults: `OP_VAULT=AI`, `MCP_HOST=127.0.0.1`, `MCP_PORT=6975`, `MCP_PATH=/mcp`, `MCP_TRANSPORT=streamable-http`.
 - Create a vault within 1Password named `AI`, and add the items you want to use.
 - [Create a service account](https://my.1password.com/developer-tools/infrastructure-secrets/serviceaccount/) and give it the appropriate permissions in the vaults where the items you want to use with the SDK are saved.
 - Provision your service account token, and configure clients like Claude Desktop to connect to this server. Add the following structure to the client's configuration (e.g., `claude_desktop_config.json`), adjusting the path and environment variables as needed:
@@ -43,6 +44,15 @@ npx -y @smithery/cli install @dkvdm/onepassword-mcp-server --client claude
 }
 ```
 * Launch Claude and try a prompt such as "Get 1Password credentials for ticktick.com" (based on item name)
+
+### Available Tools (minimal set)
+- `resolve_secret(item_name, intent="password", vault=None)`: Returns a field based on intent (password/credential/secret/token/api_key/ssh_key) with structured metadata.
+- `list_items(query=None, vault=None, category=None)`: Optional discovery tool to list matching items.
+- `upsert_item(name, kind, fields, vault=None, tags=[])`: Create or update items using simple templates (password/login, api_key/token/secret, ssh_key).
+
+### Testing
+- Run unit tests: `uv run python -m unittest discover tests`
+- Tests use fakes to validate intent resolution, listing filters, and item creation templates.
 
 
 ### Automate Browser with 1Password and Browser-Use MCP
