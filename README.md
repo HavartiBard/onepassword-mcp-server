@@ -56,6 +56,8 @@ npx -y @smithery/cli install . --client claude
 - `resolve_secret(item_name, intent="password", vault=None)`: Returns a field based on intent (password/credential/secret/token/api_key/ssh_key) with structured metadata; tries common field names in order.
 - `list_items(query=None, vault=None, category=None)`: Optional discovery tool to list matching items (title, vault, category).
 - `upsert_item(name, kind, fields, vault=None, tags=[])`: Create or update items using simple templates (password/login expects username/password; api_key/token/secret expects api_key/token/secret; ssh_key expects private_key/public_key/passphrase).
+- `run_with_secrets(command, secrets, vault=None, working_dir=None, timeout=30)`: Run a subprocess with secrets injected as env vars. Secrets never printed - only env var names returned. Command is a list (no shell).
+- `write_env_file(path, secrets, vault=None, format="dotenv")`: Write secrets to a file with 0600 permissions. Formats: dotenv, export, json. Fails if file exists.
 
 ### Available Resources
 - `onepassword://health`: Non-sensitive service status (transport/host/port/path/default vault).

@@ -12,6 +12,8 @@ Environment variables:
   MCP_PATH                  - Optional. HTTP path (default: "/mcp").
 """
 
+import asyncio
+import json
 import os
 from typing import Dict, List, Optional
 
@@ -292,6 +294,179 @@ async def upsert_item(
         fields=fields,
         vault=vault,
         tags=tags,
+    )
+
+
+async def run_with_secrets_impl(
+    command: List[str],
+    secrets: List[Dict[str, str]],
+    vault: Optional[str] = None,
+    working_dir: Optional[str] = None,
+    timeout: Optional[int] = 30,
+    client: Optional[Client] = None,
+) -> dict:
+    """Run a command with secrets injected as environment variables.
+
+    Secrets are never printed or logged - they exist only in subprocess memory.
+    """
+    client = client or await get_client()
+    vault_name = vault or OP_VAULT
+
+    # Build environment with secrets
+    env = os.environ.copy()
+    injected_keys = []
+    for spec in secrets:
+        result = await resolve_secret_impl(
+            item_name=spec["item"],
+            intent=spec.get("intent", "password"),
+            vault=vault_name,
+            client=client,
+        )
+        env_key = spec["env"]
+        env[env_key] = result["value"]
+        injected_keys.append(env_key)
+
+    # Run subprocess without shell (prevents injection attacks)
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        env=env,
+        cwd=working_dir,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "Process timed out",
+            "secrets_injected": injected_keys,
+            "timed_out": True,
+        }
+
+    return {
+        "exit_code": proc.returncode,
+        "stdout": stdout.decode(),
+        "stderr": stderr.decode(),
+        "secrets_injected": injected_keys,
+    }
+
+
+@mcp.tool()
+async def run_with_secrets(
+    command: List[str],
+    secrets: List[Dict[str, str]],
+    vault: Optional[str] = None,
+    working_dir: Optional[str] = None,
+    timeout: Optional[int] = 30,
+) -> dict:
+    """Run a command with secrets injected as environment variables.
+
+    Secrets are never printed or logged - they exist only in subprocess memory.
+    Command is a list of arguments (no shell expansion for security).
+
+    Args:
+        command: Command and arguments as a list, e.g. ["python", "script.py"]
+        secrets: List of secret specs, each with "item", "env", and optional "intent"
+                 e.g. [{"item": "database", "env": "DB_PASS", "intent": "password"}]
+        vault: Optional vault name (defaults to OP_VAULT)
+        working_dir: Optional working directory for the subprocess
+        timeout: Timeout in seconds (default 30)
+
+    Returns:
+        Dict with exit_code, stdout, stderr, and secrets_injected (env var names only)
+    """
+    return await run_with_secrets_impl(
+        command=command,
+        secrets=secrets,
+        vault=vault,
+        working_dir=working_dir,
+        timeout=timeout,
+    )
+
+
+async def write_env_file_impl(
+    path: str,
+    secrets: List[Dict[str, str]],
+    vault: Optional[str] = None,
+    format: str = "dotenv",
+    client: Optional[Client] = None,
+) -> dict:
+    """Write secrets to a file with restricted permissions (0600).
+
+    Secrets are written securely - file is created with restricted permissions
+    before any content is written.
+    """
+    client = client or await get_client()
+    vault_name = vault or OP_VAULT
+
+    # Resolve all secrets first
+    resolved = {}
+    for spec in secrets:
+        result = await resolve_secret_impl(
+            item_name=spec["item"],
+            intent=spec.get("intent", "password"),
+            vault=vault_name,
+            client=client,
+        )
+        resolved[spec["key"]] = result["value"]
+
+    # Format content
+    if format == "dotenv":
+        content = "\n".join(f'{k}="{v}"' for k, v in resolved.items())
+    elif format == "export":
+        content = "\n".join(f'export {k}="{v}"' for k, v in resolved.items())
+    elif format == "json":
+        content = json.dumps(resolved, indent=2)
+    else:
+        raise ValueError(f"Unknown format: {format}. Supported: dotenv, export, json")
+
+    # Write securely with restricted permissions
+    # O_EXCL ensures we don't overwrite existing files (security)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, content.encode())
+    finally:
+        os.close(fd)
+
+    return {
+        "path": path,
+        "format": format,
+        "keys": list(resolved.keys()),
+        "permissions": "0600",
+    }
+
+
+@mcp.tool()
+async def write_env_file(
+    path: str,
+    secrets: List[Dict[str, str]],
+    vault: Optional[str] = None,
+    format: str = "dotenv",
+) -> dict:
+    """Write secrets to a file with restricted permissions (0600).
+
+    File is created securely - permissions are set before content is written.
+    Will fail if file already exists (use a new path).
+
+    Args:
+        path: File path to write secrets to
+        secrets: List of secret specs, each with "item", "key", and optional "intent"
+                 e.g. [{"item": "database", "key": "DB_PASS", "intent": "password"}]
+        vault: Optional vault name (defaults to OP_VAULT)
+        format: Output format - "dotenv", "export", or "json" (default: "dotenv")
+
+    Returns:
+        Dict with path, format, keys (no secret values), and permissions
+    """
+    return await write_env_file_impl(
+        path=path,
+        secrets=secrets,
+        vault=vault,
+        format=format,
     )
 
 

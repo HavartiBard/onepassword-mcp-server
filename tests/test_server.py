@@ -1,3 +1,6 @@
+import os
+import stat
+import tempfile
 import unittest
 
 import server
@@ -123,6 +126,117 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values["private_key"], "PRIVATE")
         self.assertEqual(values["public_key"], "PUBLIC")
         self.assertEqual(values["passphrase"], "secret-pass")
+
+    async def test_run_with_secrets_injects_env_vars(self):
+        """Verify secrets are injected as environment variables."""
+        result = await server.run_with_secrets_impl(
+            command=["python", "-c", "import os; print(os.environ.get('DB_PASS', 'NOT_SET'))"],
+            secrets=[{"item": "netbox", "intent": "password", "env": "DB_PASS"}],
+            vault="AI",
+            client=self.fake_client,
+        )
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("netbox-pass", result["stdout"])
+        self.assertEqual(result["secrets_injected"], ["DB_PASS"])
+
+    async def test_run_with_secrets_does_not_leak_secrets_in_return(self):
+        """Verify secrets are not in the return value (only env var names)."""
+        result = await server.run_with_secrets_impl(
+            command=["echo", "hello"],
+            secrets=[{"item": "netbox", "intent": "password", "env": "SECRET_VAR"}],
+            vault="AI",
+            client=self.fake_client,
+        )
+        # The actual secret value should NOT appear in the result dict
+        result_str = str(result)
+        self.assertNotIn("netbox-pass", result_str)
+        # But the env var name should be listed
+        self.assertIn("SECRET_VAR", result["secrets_injected"])
+
+    async def test_run_with_secrets_timeout(self):
+        """Verify timeout kills long-running processes."""
+        result = await server.run_with_secrets_impl(
+            command=["sleep", "10"],
+            secrets=[],
+            vault="AI",
+            timeout=1,
+            client=self.fake_client,
+        )
+        self.assertEqual(result["exit_code"], -1)
+        self.assertTrue(result.get("timed_out", False))
+
+    async def test_write_env_file_dotenv_format(self):
+        """Test writing secrets in dotenv format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "secrets.env")
+            result = await server.write_env_file_impl(
+                path=path,
+                secrets=[{"item": "netbox", "intent": "password", "key": "DB_PASS"}],
+                vault="AI",
+                format="dotenv",
+                client=self.fake_client,
+            )
+            self.assertEqual(result["path"], path)
+            self.assertEqual(result["format"], "dotenv")
+            self.assertEqual(result["keys"], ["DB_PASS"])
+            self.assertEqual(result["permissions"], "0600")
+
+            # Verify file content
+            with open(path) as f:
+                content = f.read()
+            self.assertIn('DB_PASS="netbox-pass"', content)
+
+            # Verify permissions (0600)
+            file_stat = os.stat(path)
+            self.assertEqual(stat.S_IMODE(file_stat.st_mode), 0o600)
+
+    async def test_write_env_file_export_format(self):
+        """Test writing secrets in export format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "secrets.sh")
+            result = await server.write_env_file_impl(
+                path=path,
+                secrets=[{"item": "netbox", "intent": "password", "key": "DB_PASS"}],
+                vault="AI",
+                format="export",
+                client=self.fake_client,
+            )
+            with open(path) as f:
+                content = f.read()
+            self.assertIn('export DB_PASS="netbox-pass"', content)
+
+    async def test_write_env_file_json_format(self):
+        """Test writing secrets in JSON format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "secrets.json")
+            result = await server.write_env_file_impl(
+                path=path,
+                secrets=[{"item": "netbox", "intent": "password", "key": "DB_PASS"}],
+                vault="AI",
+                format="json",
+                client=self.fake_client,
+            )
+            with open(path) as f:
+                content = f.read()
+            import json
+            data = json.loads(content)
+            self.assertEqual(data["DB_PASS"], "netbox-pass")
+
+    async def test_write_env_file_fails_if_exists(self):
+        """Verify write_env_file fails if file already exists (security)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "existing.env")
+            # Create existing file
+            with open(path, "w") as f:
+                f.write("existing content")
+
+            with self.assertRaises(FileExistsError):
+                await server.write_env_file_impl(
+                    path=path,
+                    secrets=[{"item": "netbox", "intent": "password", "key": "DB_PASS"}],
+                    vault="AI",
+                    client=self.fake_client,
+                )
 
 
 if __name__ == "__main__":
